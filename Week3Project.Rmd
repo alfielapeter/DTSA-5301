@@ -1,0 +1,110 @@
+---
+title: "Week3Project"
+output:
+  html_document: default
+  pdf_document: default
+date: "2023-11-01"
+---
+
+## NYPD Shooting Incident Data
+
+This is the NYPD shooting data found via <https://catalog.data.gov/dataset?q=NYPD+Shooting+Incident+Data+%28Historic%29&sort=views_recent+desc&ext_location=&ext_bbox=&ext_prev_extent=>. It contains data from 2006 to November 2023.
+
+```{r, results='hide', message=FALSE}
+library(tidyverse)
+
+nypd_data <- read_csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD")
+nypd_data_current <- read_csv("https://data.cityofnewyork.us/api/views/5ucz-vwe8/rows.csv?accessType=DOWNLOAD")
+
+nypd_data_current$STATISTICAL_MURDER_FLAG <- ifelse(nypd_data_current$STATISTICAL_MURDER_FLAG == "Y", TRUE, FALSE)
+
+library(lubridate)
+
+all_nypd_data <- nypd_data %>% 
+  full_join(nypd_data_current) %>% 
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE)) %>%
+  select(-c(INCIDENT_KEY, LOC_OF_OCCUR_DESC, LOC_CLASSFCTN_DESC, LOCATION_DESC, JURISDICTION_CODE, X_COORD_CD, Y_COORD_CD, Latitude, Longitude, Lon_Lat, "New Georeferenced Column"))
+```
+
+I combined the historical data with the current year's data to get as much up to date data as I could in one place. I also removed some columns that didn't seem relevant to what I was planning to analyze. This left me with the following:
+
+```{r, all_nypd_data}
+summary(all_nypd_data)
+```
+The shooting data is interesting but not a topic I'd normally research, so it was somewhat difficult to come up with an analysis. I was curious about the difference in the victim's sex and their location, so I thought I'd look at the comparison between the sexes and what it looks like in each precinct and borough. Do certain areas have a greater proportion of shooting victims that are male or female?
+
+```{r}
+victim_sex_by_precinct <- all_nypd_data %>% group_by(PRECINCT) %>% summarise(
+    male_victim = sum(VIC_SEX == "M", na.rm = TRUE),
+    female_victim = sum(VIC_SEX == "F", na.rm = TRUE),
+    total_victim = n()
+  )
+victim_sex_by_boro <- all_nypd_data %>% group_by(BORO) %>% summarise(
+    male_victim = sum(VIC_SEX == "M", na.rm = TRUE),
+    female_victim = sum(VIC_SEX == "F", na.rm = TRUE),
+    total_victim = n()
+  )
+```
+
+
+```{r}
+victim_sex_by_precinct %>% 
+  ggplot(aes(y = male_victim, x = PRECINCT)) + 
+  geom_bar(aes(x = PRECINCT, y = male_victim, fill = "Male"), stat = "identity", position = "dodge") +
+  geom_bar(aes(x = PRECINCT, y = female_victim, fill = "Female"), stat = "identity", position = "dodge") +
+  theme(legend.position = "bottom") + 
+  scale_fill_manual(values = c("Male" = "blue", "Female" = "red")) +
+  labs(
+    title = "Victims by Sex by Precinct", 
+    x = "Precinct", 
+    y = "Number of Victims",
+    fill = "Sex"
+  )
+```
+
+The only standout I see from looking at the victims' sex by precinct is that there are significantly more male victims than female vicitims. However, that would be pretty obvious just summing each column. With a large number of precincts it is difficult to analyze this graph, so I decided to group the data by borough instead:
+
+```{r}
+victim_sex_by_boro %>% 
+  ggplot() + 
+  geom_bar(aes(x = BORO, y = male_victim, fill = "Male"), stat = "identity", position = "dodge") +
+  geom_bar(aes(x = BORO, y = female_victim, fill = "Female"), stat = "identity", position = "dodge") +
+  theme(legend.position = "bottom") + 
+  scale_fill_manual(values = c("Male" = "blue", "Female" = "red")) +
+  labs(
+    title = "Victims by Sex by Borough", 
+    x = "Borough", 
+    y = "Number of Victims",
+    fill = "Sex"
+  )
+```
+
+Looking at the same data in regards to the borough where the shooting occurred is a little easier to see as there are many precincts per borough and only five boroughs. What this visualization does show me is that there is not a significant difference in proportions of shootings where the victim was male versus female.
+
+This leads to a model where we can ask the likelihood of a male being a shooting victim based on the borough they're in.
+
+```{r}
+  all_nypd_data <- all_nypd_data %>% 
+    mutate(female_victim = ifelse(all_nypd_data$VIC_SEX == "F", TRUE, FALSE)) %>%
+    mutate(male_victim = ifelse(all_nypd_data$VIC_SEX == "M", TRUE, FALSE))
+
+  mod <- glm(male_victim ~ BORO, data = all_nypd_data, family = binomial)
+  summary(mod)
+```
+  
+Graphing that data makes it look like it was a bad model. This is most likely due to trying to follow the course example and forcing an analysis that isn't similar enough to the example.
+  
+```{r}
+  all_nypd_data_with_pred <- all_nypd_data %>% mutate(pred = predict(mod))
+  
+  all_nypd_data_with_pred %>% ggplot() +
+    geom_bar(aes(x = BORO, y = pred, fill = BORO), stat = "identity") +
+    labs(
+      title = "Probability of a Victim Being Male by Borough",
+      x = "Borough",
+      y = "Predicted Probability"
+    )
+```
+
+
+I'm sure I have many biases in regards to analyzing this data, but hopefully none that significantly affect my report. I don't live in the United States, so shooting data like this seems incredible in the first place. I have a general distrust of policing, so trusting data that comes from those organizations is difficult as well. 
